@@ -57,14 +57,21 @@ if __name__ == "__main__":
   chunk_size = 1000
   
   # Define variables to export
-  expl_vars = ["START_POINT_LON", "START_POINT_LAT", "END_POINT_LON", "END_POINT_LAT", "HOUR", "WDAY", "WEEK", "DISTANCE", "DURATION"]
+  expl_vars = ["START_POINT_LON", "START_POINT_LAT", "END_POINT_LON", "END_POINT_LAT", "START_CELL", "END_CELL", "HOUR", "WDAY", "WEEK", "DISTANCE", "DURATION"]
+  
+  # Number of points used for the discretization
+  N, M = (100, 75)
+
+  # Define function that transforms cells to ids
+  id_to_nr = lambda (i, j): N * j + i # (i + 1) 
   
   # Read in the file
   data_chunks = pd.read_csv(filepath_or_buffer = filepath,
                             sep = ",",
                             chunksize = chunk_size,
-                            usecols = ["TIMESTAMP", "START_POINT", "END_POINT", "HOUR", "WDAY", "DURATION"],
-                            converters = {"START_POINT": lambda x: eval(x),
+                            usecols = ["TIMESTAMP", "START_POINT", "END_POINT", "GRID_POLYLINE", "HOUR", "WDAY", "DURATION"],
+                            converters = {"GRID_POLYLINE": lambda x: eval(x),
+                                          "START_POINT": lambda x: eval(x),
                                           "END_POINT": lambda x: eval(x)})
                                           
   # Iterate through the chunks
@@ -74,10 +81,14 @@ if __name__ == "__main__":
     
     # Compute distance and start/end points
     chunk["DISTANCE"] = chunk.apply(lambda x: haversine(x["START_POINT"], x["END_POINT"]), axis = 1)
+    #chunk["DISTANCE_FROM_TRUNC"] = chunk.apply(lambda x: haversine(x["TRUNC_POINT"], x["END_POINT"]), axis = 1)
     chunk["START_POINT_LON"] = chunk["START_POINT"].map(lambda x: x[0])
     chunk["START_POINT_LAT"] = chunk["START_POINT"].map(lambda x: x[1])
     chunk["END_POINT_LON"] = chunk["END_POINT"].map(lambda x: x[0])
     chunk["END_POINT_LAT"] = chunk["END_POINT"].map(lambda x: x[1])
+    chunk["START_CELL"] = chunk["GRID_POLYLINE"].map(lambda x: id_to_nr(x[0]))
+    chunk["END_CELL"] = chunk["GRID_POLYLINE"].map(lambda x: id_to_nr(x[-1]))
+    #chunk["TRUNC_CELL"] = chunk["TRUNC_GRID_POLYLINE"].map(lambda x: id_to_nr(x[-1]))
     
     # Compute week of year
     chunk["WEEK"] = chunk["TIMESTAMP"].dt.week
@@ -88,6 +99,6 @@ if __name__ == "__main__":
     else:
       chunk.to_csv(filepath_processed, mode = "a", header = False, index = False, columns = expl_vars)
                                           
-    print "-- Processed chunk %d of 1392" % idx                      
+    print "-- Processed chunk %d of 1382" % idx                      
 
     

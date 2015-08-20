@@ -25,7 +25,7 @@ if __name__ == "__main__":
 
   # Generate a list of cutoff dates
   seconds_per_day = 24 * 60 * 60
-  day_gap = 1
+  day_gap = 5
   
   start_unix = 1372633253 # Minimum datetime (2013-07-01 00:00:53) in seconds (unix)
   end_unix = 1404169154 # Maximum datetime (2014-06-30 23:59:14) in seconds (unix)
@@ -53,10 +53,7 @@ if __name__ == "__main__":
   savedTest = False
   truncate = lambda x, y: x[:y]
                                            
-  for idx, chunk in enumerate(data_chunks):
-    # Remove the first two columns of the chunk
-    chunk.drop(["Unnamed: 0", "Unnamed: 0.1"], inplace = True, axis = 1)
-    
+  for idx, chunk in enumerate(data_chunks):    
     # Convert timestamp to datetime series
     chunk.TIMESTAMP = pd.to_datetime(chunk.TIMESTAMP)
     
@@ -104,6 +101,11 @@ if __name__ == "__main__":
         
         """
         
+        # Add some extra variables
+        validation["TRUNC_END_CELL"] = validation["TRUNC_GRID_POLYLINE"].map(lambda x: x[-1])
+        validation["TRUNC_POINT"] = validation["TRUNC_POLYLINE"].map(lambda x: x[-1])
+        validation["TRUNC_DURATION"] = validation["TRUNC_GRID_POLYLINE"].map(lambda x: 15*(len(x) - 1))
+        
         # Save validation set
         if not savedTest:
           validation.to_csv(filepath_processed + "train_binarized_trips_validation.csv", header = True, index = False)
@@ -124,14 +126,19 @@ if __name__ == "__main__":
 
   # Sanity check
   tr = pd.read_csv(filepath_processed + "train_binarized_trips_train.csv", sep = ",", chunksize = 1000)      
-  te = pd.read_csv(filepath_processed + "train_binarized_trips_validation.csv", sep = ",")    
+  te = pd.read_csv(filepath_processed + "train_binarized_trips_validation.csv", sep = ",")   
+  tot = pd.read_csv(filepath, sep = ",", chunksize = 1000)
   
   count = 0
   for ch in tr:
     count += ch.TRIP_ID.count()
+  
+  tot_count = 0 
+  for ch in tot:
+    tot_count += ch.TRIP_ID.count()
     
   count += te.TRIP_ID.count()
-  check = (count == 1404390)
+  check = (count == tot_count)
 
   if check:
     print "- Passed sanity check."

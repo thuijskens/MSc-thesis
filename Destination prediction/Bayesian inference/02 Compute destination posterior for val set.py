@@ -211,57 +211,104 @@ if __name__ == "__main__":
   
   # Define distance function
   dist = lambda x1, x2: np.sqrt(np.power(x1[0] - x2[0], 2) + np.power(x1[1] - x2[1], 2))
-    
+  
+  # Define function that transforms cells to ids
+  id_to_nr = lambda (i, j): N * j + i # (i + 1) 
+
+  pd.set_option('display.precision',10)
+  
   # Import the data in chunks with pandas read_csv
   validation = pd.read_csv(filepath_or_buffer = filepath_val,
                            sep = ",",
                             #nrows = 10,
                             #chunksize = chunk_size,
+                           usecols = ["TRIP_ID", "START_POINT", "ORIGIN_CALL", "ORIGIN_STAND", "TRUNC_GRID_POLYLINE"],
                            converters = {#"TIMESTAMP" : lambda x: datetime.datetime.fromtimestamp(x),
-                                         "POLYLINE": lambda x: json.loads(x),
+                                         "TRIP_ID": lambda x: str(x),
+                                         #"POLYLINE": lambda x: json.loads(x),
                                          "START_POINT": lambda x: eval(x),
-                                         "GRID_POLYLINE": lambda x: eval(x),
-                                         "TRUNC_POLYLINE": lambda x: eval(x),
+                                         #"GRID_POLYLINE": lambda x: eval(x),
+                                         #"TRUNC_POLYLINE": lambda x: eval(x),
+                                         #"START_CELL": lambda x: eval(x),
                                          "TRUNC_GRID_POLYLINE": lambda x: eval(x)})
   
   # Load the probabilities for the target distribution
-  target_prob = pd.read_csv(filepath_or_buffer = filepath_target,
+  prior_start_prob = pd.read_csv(filepath_or_buffer = filepath_target,
                             sep = ",",
                             converters = {"START_CELL": lambda x: eval(x),
                                           "DESTINATION": lambda x: eval(x)})
                                           
+  prior_probs = pd.read_csv(filepath_or_buffer = filepath_probs, 
+                       sep = ",",
+                       converters = {"DESTINATION" : lambda x: eval(x)}) 
+                                          
+  # Shrinkage estimator (same as categorical likelihood and dirichlet prior?)
+  prior_unif = DestinationGrid(N, M, 1 / (N*M))  
+  # Set the probability of the sea as a destination equal to zero
+  with open("E:/MSc thesis/Destination prediction/sea_indices.txt", "r") as f: 
+    sea_indices = f.readlines()
+    
+    for index in sea_indices:
+      prior_unif.setProb(eval(index[:-1]), 0)
+    
+    prior_unif.normalizeProbs()
+
   # Process each partial trip one at a time                                        
   for idx, partial_trip in validation.iterrows():
     # Initialize the prior distribution for the partial trip
     posterior = DestinationGrid(N, M)
-    prior = DestinationGrid(N, M)  
+    prior_id = DestinationGrid(N, M)  
+    prior_start = DestinationGrid(N, M)
+    
+    """ Thomas @ 17-08: This was a slightly more elegant way, since we don't have to preload the data
+    However, it does introduce a lot of overhead as a file has to be read for 
+    every trip. 
     
     if partial_trip.ORIGIN_CALL >= 0:
-      prior.importProbs(filepath_probs, callID = partial_trip.ORIGIN_CALL)
+      prior_id.importProbs(filepath_probs, callID = partial_trip.ORIGIN_CALL)
     elif partial_trip.ORIGIN_STAND >= 0:
-      prior.importProbs(filepath_probs, standID = partial_trip.ORIGIN_STAND)
+      prior_id.importProbs(filepath_probs, standID = partial_trip.ORIGIN_STAND)
     else:
-      prior.importProbs(filepath_probs)
+      prior_id.importProbs(filepath_probs)
+    """
+    # Select the appropriate filter
+    if partial_trip.ORIGIN_CALL >= 0:
+      mask = (prior_probs.ORIGIN_CALL == partial_trip.ORIGIN_CALL)
+    elif partial_trip.ORIGIN_STAND >= 0:
+      mask = (prior_probs.ORIGIN_STAND == partial_trip.ORIGIN_STAND)
+    else:
+      mask = (prior_probs.ORIGIN_STREET == True)
     
-    # Shrinkage estimator (same as categorical likelihood and dirichlet prior?)
-    shrinkage = DestinationGrid(N, M, 1 / (N*M))
+    # get the relevant probabilities from the probability tables
+    prior_id_data = prior_probs[mask]
+    prior_start_data = prior_start_prob[prior_start_prob.START_CELL == partial_trip.TRUNC_GRID_POLYLINE[0]]
     
-    # We set up the target distribution
-    target = DestinationGrid(N, M)
-                                            
-    # Get the probabilities for the current starting cell                                        
-    target_data = target_prob[target_prob.START_CELL == partial_trip.TRUNC_GRID_POLYLINE[0]]
-      
-    # Update the target
-    target.setProbs(target_data.DESTINATION.values, target_data.PERCENT.values)
+    # Update the prior grids
+    prior_id.setProbs(prior_id_data.DESTINATION.values, prior_id_data.PERCENT.values)
+    prior_start.setProbs(prior_start_data.DESTINATION.values, prior_start_data.PERCENT.values)
     
+    """
     # Melt this target with a uniform prior to get a "open-world" prior
     target = target.melt(shrinkage)
     
     # Finally melt the target with the data-based prior
     prior = prior.melt(target)
+    """
     
-    # Update the posterior probability for every destination cell
+    # Combine these distributions
+    prior = DestinationGrid(N, M)
+    alpha = 0.2
+    beta = 0.2
+    
+    for cell in prior:
+      prior.setProb(cell, alpha * prior_start.getProb(cell) + beta * prior_unif.getProb(cell) + (1 - alpha - beta) * prior_id.getProb(cell))
+    
+    """
+    for key in prior._table.keys():
+      prior._table[key] = alpha * prior_start._table[key] + beta * prior_unif._table[key] + (1 - alpha - beta) * prior_id._table[key]
+    """
+    
+    # Update the posterior probability for every destination cell (this is the slowest part of the code)
     for destination in posterior:
       # Compute the probability P[X^p | D]
       probability = 1 # Probability of partial trip
@@ -283,31 +330,19 @@ if __name__ == "__main__":
     posterior.normalizeProbs()
     
     # Export the probabilities
-    df_probs = pd.DataFrame(columns = ["TRIP_ID", "DEST_CELL", "PROB", "DISTANCE"])
-    for dest, prob in posterior._table.iteritems():
-      dst = haversine(coords_from_cell(dest), partial_trip.START_POINT)
-      new_line = pd.DataFrame({"TRIP_ID": partial_trip.TRIP_ID,
-                               "DEST_CELL": str([dest[0], dest[1]]),
-                               "PROB": prob,
-                               "DISTANCE": dst},
-                               index = np.arange(1))
-      df_probs = df_probs.append(new_line, ignore_index = True)
-
+    dests = [id_to_nr(dest) for dest in posterior]
+    dists = [haversine(coords_from_cell(dest), partial_trip.START_POINT) for dest in posterior]
+    probs = posterior._table.values()
+    
+    df_probs = pd.DataFrame({"TRIP_ID": partial_trip.TRIP_ID,
+                             "DEST_CELL": dests,
+                             "PROB": probs,
+                             "DISTANCE": dists})
+      
     if idx == 0:
       df_probs.to_csv(filepath_processed, header = True, index = False)
     else:
       df_probs.to_csv(filepath_processed, mode = "a", header = False, index = False)
     
-    print "-- Processed trip %d" % idx
-    
-  
-
-                                   
-                                   
-                                   
-                                   
-                                   
-                                   
-                                   
-                                   
+    print "-- Processed trip %d of %d" % (idx + 1, len(validation))
                                    

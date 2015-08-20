@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-01 Compute prior probabilities.py
+01b Compute shrinkage probabilities.py
 
 This script computes the empirical probability distributions of
 
-  P[D | X, C], 
-  P[D | X, S],
-  P[D | X, N],
-  
-where D is the destination of a trip, X is the full set of complete taxi trips
-and S is a stand ID, C is a caller ID and N a binary variable indicating if the
-taxi was called from the streets.
+  P[D | {S_i}_{i = 1,...,Q} ],
+
+where D is the destination cell of a trip, and the {S_i} are the starting 
+cells of the trips in the training set
 
 """
 
