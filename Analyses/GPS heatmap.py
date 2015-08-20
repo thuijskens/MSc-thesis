@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 lat_mid = 41.1496100
 lon_mid = -8.6109900
-width = 0.2
+width = 0.1
 
 # Load the data in chunks
 data_chunks = pd.read_csv("E:/MSc thesis/Raw data/train.csv",
@@ -36,12 +36,12 @@ for idx, chunk in enumerate(data_chunks):
 img = np.log(hist[::-1,:] + 1)
 
 # Plot the counts
-plt.figure(figsize = (50, 50))
+plt.figure(figsize = (25,25))
 ax = plt.subplot(1,1,1)
 plt.imshow(img)
 plt.axis('off')
       
-plt.savefig('gps_heatmap.png')
+plt.savefig('gps_heatmap.pdf')
 plt.close()
 
 # Save data for later use

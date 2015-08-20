@@ -173,7 +173,7 @@ class Grid:
     self.lat_grid = lat_grid
     self.lat_step = lat_step
     
-  def __str__(self):
+  def grid_to_string(self):
     return str(self.grid)
     
   def grid_to_array(self):
@@ -184,7 +184,7 @@ class Grid:
       grid_array[(cell[0] - 1, cell[1] - 1)] += 1
       
     return grid_array
-      
+    
   def PlotGrid(self, ax, plot_grid_lines = False):
     """ PlotGrid
         Plots the grid representation of the gray, where is cell is colored 
@@ -233,86 +233,47 @@ class Grid:
       ax.set_ylim(y_range)
       
     return ax
-    
+
 if __name__ == "__main__":
+  print "- Starting binarizing script"
+  
   # Get the location of the data file
-  args = sys.argv[1:]
-  if args[0] is None:
-    filepath = "E:/MSc thesis/Processed data/train_binarized_trips_train.csv"
-  else:
-    filepath = args[0]
+  filepath = "E:/MSc thesis/Processed data/train_cleaned.csv"
+  filepath_clean = "E:/MSc thesis/Processed data/train_binarized_trips.csv"
   
   # Define the bins for the grid
   # Note: 1 degree of longitude/latitude is approximately 111.38 km
   N = 100
   M = 75
   
-  # Define the boundaries of the grid
-  lon_vals = (-8.73, -8.5)
-  lat_vals = (41.1, 41.25)   
-  
+  # From visual inspection of porto map. We are only focusing on the city centre
+  # 15-07-14: We continue with this bounding box as of now
+  lon_vals = [-8.73, -8.5]
+  lat_vals = [41.1, 41.25]   
   
   lon_bins, lon_step = np.linspace(lon_vals[0], lon_vals[1], N, retstep = True)
   lat_bins, lat_step = np.linspace(lat_vals[0], lat_vals[1], M, retstep = True)
-  
-  hist = np.zeros((N, M))
-  
+     
   # Use pandas read_csv function to read the data in chunks
   data_chunks = pd.read_csv(filepath_or_buffer = filepath,
                             sep = ",",
-                            chunksize = 1000,
-                            usecols = ["GRID_POLYLINE"],
-                            converters = {'GRID_POLYLINE': lambda x: Grid(eval(x), lon_bins, lon_step, lat_bins, lat_step)})
+                            chunksize = 10000,
+                            converters = {'POLYLINE': lambda x: json.loads(x)})
                             
+  # Define a function that transforms the POLYLINE data                  
+  to_grid = lambda polyline: trip_to_grid(np.array(polyline), lon_bins, lon_step, lat_bins, lat_step)
                             
   for idx, chunk in enumerate(data_chunks):
-    for grid in chunk.GRID_POLYLINE:
-      # Ugly: allocate grid cells to histogram
-      for cell in grid.grid:
-        hist[cell[0] - 1, cell[1] - 1] += 1 # 2015-07-13: I think this is wrong!!! The cell indices start at (0,0) after all
-    
-    print "Processed chunk %d" % idx
-  
-  # Flip the histogram  
-  plt.imshow(np.log(hist[:,::-1].T), extent = [lon_vals[0], lon_vals[1], lat_vals[0], lat_vals[1]])
-  
-  plt.imshow(np.log(hist))
-  fig, ax = plt.subplots()
-  ax.set_xlim(lon_vals[0], lon_vals[1])
-  ax.set_ylim(lat_vals[0], lat_vals[1])
-  plt.close()
-  
-  for idx, chunk in enumerate(data_chunks):
-    for grid in chunk.GRID_POLYLINE:
-      ax = grid.PlotGrid(ax, True)
-      plt.close()
-    
-    if idx == 5:
-      break
+    # Compute the grid representations of these trips
+    chunk["GRID_POLYLINE"] = chunk["POLYLINE"].map(to_grid) 
 
-  # Thomas @ 17-08: Following code gets the sea coast
-  plt.imshow(np.log(hist[:30,:70]))
-  # First filter
-  sea = hist[:30,:70]
-  # We are going to fill the white spots
-  sea[17:, 30:] = 1
-  sea[12:, 41:] = 1
-  sea[6:, 49:] = 1
-  sea[3:, 62:] = 1
-  sea[1:, 68:] = 1
-  plt.imshow(np.log(sea))
-  
-  # Now get the indices where the probability is still zero
-  sea_indices = np.where(sea == 0)
-  
-  # Store these indices
-  with f as open("E:/MSc thesis/Destination prediction/sea_indices.txt", "w"):
-    for index in zip(*sea_indices):
-      f.write(index)
+    # Transform into a string
+    chunk["GRID_POLYLINE"] = chunk["GRID_POLYLINE"].map(lambda x: x.grid_to_string())
     
-  f.close()
+    # Append data to a csv file
+    if idx == 0:
+      chunk.to_csv(filepath_clean, header = True, index = False)
+    else:
+      chunk.to_csv(filepath_clean, mode = "a", header = False, index = False)
       
-  
-    
-
-
+    print "Processed chunk %d of 139" % idx
