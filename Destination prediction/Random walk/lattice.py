@@ -168,7 +168,76 @@ class Lattice(object):
     if not directed_lattice:
       self._lattice[v].setWeight(self._lattice[u], weight)
 
-  
+class SecondOrderLattice(Lattice):
+  """ SecondOrderLattice class
+      This class inherits from Lattice and is used to model the second-order 
+      random walk.
+      
+      Instead of regular cells, the nodes in this lattice represent the edges 
+      from the city graph. Instead of the cell number (i, j), we now encode 
+      keys according to
+        (old_cell_id, new_cell_id)
+      where the cell_id is computed from (i, j) --> j*N + i. This way the node
+      actually represents a movement. 
+  """
+    
+  def __init__(self, leftCorner, rightCorner, nrCells):
+    self._cells_x = nrCells[0]
+    self._cells_y = nrCells[1]
+    self._min_x = leftCorner[0]
+    self._min_y = leftCorner[1]
+    self._max_x = rightCorner[0]
+    self._max_y = rightCorner[1]
+    
+    # Create the lattice
+    self._lattice = {}
+    
+    # Now we need to add each edge as a node in the lattice.
+    # First get a list of all possible cells in the city grid
+    grid_cells = [(i, j) for i in xrange(self._cells_x) for j in xrange(self._cells_y)]
+    
+    # Then we fill the lattice with all possible moves as keys
+    for grid_cell in grid_cells:
+      moves = self.get_moves(grid_cell)
+      for move in moves:
+        self._lattice[move] = Cell(key = move)
+        
+    # Now we need to add the possible moves between edges as neighbours 
+    for edge in self._lattice.keys():
+      new_cell = edge[1] # Get the end cell of a move
+      # Compute all possible new moves from that end cell
+      new_moves = self.get_moves(new_cell)
+      for new_move in new_moves:
+        self.addEdge(edge, new_move, directed_lattice = True)
+        
+  def get_moves(self, cell): 
+    i, j = cell
+    moves = []
+    
+    if i - 1 >= 0:
+      moves.append(((i, j), (i - 1, j)))
+      if j - 1 >= 0:
+        moves.append(((i, j), (i - 1, j - 1)))
+      if j + 1 < self._cells_y:
+        moves.append(((i, j), (i - 1, j + 1)))
+        
+    if i + 1 < self._cells_x:
+      moves.append(((i, j), (i + 1, j)))
+      if j - 1 >= 0:
+        moves.append(((i, j), (i + 1, j - 1)))
+      if j + 1 < self._cells_y:
+        moves.append(((i, j), (i + 1, j + 1)))
+
+    if j - 1 >= 0:
+      moves.append(((i, j), (i, j - 1)))
+    
+    if j + 1 < self._cells_y:
+      moves.append(((i, j), (i, j + 1)))
+
+    return moves
+    
+    
+    
 class Walker(object):
   def __init__(self, lattice, start, alpha = 0.01, dest_threshold = 3, rng_seed = None):
     self.position = lattice.getCell(start)
@@ -181,7 +250,7 @@ class Walker(object):
     self._same_cell_count = 0
     self._rng = np.random.RandomState(rng_seed)
     
-    if self.position is None:
+    if self.position not in self._lattice:
       raise ValueError("Starting cell %s is not a cell in the given lattice" % start)
     
   def simulateStep(self):
@@ -238,7 +307,3 @@ class Walker(object):
     
     return self.path[-1]
   
-  
-
-
-

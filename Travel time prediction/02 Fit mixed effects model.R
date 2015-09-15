@@ -22,8 +22,8 @@ library(lme4)
 setwd("E:/MSc thesis")
 
 # Import the data
-train_vars = c("START_POINT_LON", "START_POINT_LAT", "END_POINT_LON", "END_POINT_LAT", "START_CELL", "END_CELL", "HOUR", "WDAY", "WEEK", "DISTANCE", "DURATION")
-train <- as_data_frame(fread("./Processed data/train_lm.csv", header = TRUE, sep = ",", select = train_vars))
+train_vars = c("TRIP_ID", "START_POINT_LON", "START_POINT_LAT", "END_POINT_LON", "END_POINT_LAT", "START_CELL", "END_CELL", "HOUR", "WDAY", "WEEK", "DISTANCE", "DURATION")
+train <- as_data_frame(fread("./Processed data/train_lm.csv", header = TRUE, sep = ",", select = train_vars, colClasses = c(TRIP_ID = "character")))
 val <- as_data_frame(fread("./Processed data/val_lm.csv", header = TRUE, colClasses = c(TRIP_ID = "character")))
 
 # Make sure HOUR, WDAY and WEEK are factors
@@ -50,12 +50,29 @@ train <- train %>%
 val <- val %>%
   mutate(TRUNC_AVG_SPEED = TRUNC_DISTANCE / TRUNC_DURATION)
 
-# Estimate random effects model with lme
+#############
+# Mixed effects model analysis
+#############
+
+# First, we estimate a complete random effects model (no fixed effects)
+full_re <- lmer(formula = log(DURATION) ~ (1 | HOUR) + (1 | WDAY) + (1 | WEEK) + (1 | START_CELL) + (1 | END_CELL),
+                data = train,
+                REML = TRUE)
+
+# Look at the summary of the model
+summary(full_re)
+
+# Then, we look at a reduced mixed effects model
 travel_me <- lmer(formula = log(DURATION) ~ 1 + HOUR + WDAY + WEEK + (1 | START_CELL) + (1 | END_CELL),
                   data = train,
                   REML = TRUE)
 
 summary(travel_me)
+
+# Finally, consider the mixed effects model, but nest end cell withing the starting cell
+interaction_me <- lmer(formula = log(DURATION) ~ (1 | START_CELL/END_CELL),
+                       data = train,
+                       REML = TRUE)
 
 # Look at some diagnostic plots
 plot(travel_me) # residuals vs fitted

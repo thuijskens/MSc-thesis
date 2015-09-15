@@ -1,6 +1,10 @@
-""" 01 Random walk simulation for validation set.py
-    Constructs a lattice based on the historical trips in the dataset. S random
-    walks are then simulated for every partial trip in the validation data set, 
+# -*- coding: utf-8 -*-
+""" 02 Second-order random walk for validation set.py
+    Constructs a lattice based on the historical trips in the dataset. In this
+    lattice the nodes represent the edges from the city graph and the edges 
+    represent movements between these edges.
+    
+    S second-order random walks are then simulated for every partial trip in the validation data set, 
     where S is pre-specified.
     
     The destination of each random walk is recorded, and the distribution of
@@ -15,12 +19,17 @@ from DestinationGrid import *
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-  
+import json
+
+
 if __name__ == "__main__":
   # Location of the data
   filepath = "E:/MSc thesis/Processed data/train_binarized_trips_train.csv"
   filepath_val = "E:/MSc thesis/Processed data/train_binarized_trips_validation.csv"
-  filepath_processed = "E:/MSc thesis/Processed data/val_posteriors_random_walk.csv"
+  filepath_processed = "E:/MSc thesis/Processed data/val_posteriors_2nd_order_random_walk.csv"
+  filepath_plot = "E:/MSc thesis/Processed data/plot_posteriors_2nd_order_random_walk.csv"
+  filepath_plot_trip = "E:/MSc thesis/Processed data/plot_trip_2nd_order_random_walk.csv"
+  chunk_size = 10000
   
   # From visual inspection of porto map. We are only focusing on the city centres
   lon_vals = (-8.73, -8.5)
@@ -43,16 +52,16 @@ if __name__ == "__main__":
   lon_bins, lon_step = np.linspace(lon_vals[0], lon_vals[1], N, retstep = True)
   lat_bins, lat_step = np.linspace(lat_vals[0], lat_vals[1], M, retstep = True)
   
-  ltc = Lattice(leftCorner = (lon_vals[0], lat_vals[0]), 
-                rightCorner = (lon_vals[1], lat_vals[1]), nrCells = (N, M))
+  ltc = SecondOrderLattice(leftCorner = (lon_vals[0], lat_vals[0]),
+                           rightCorner = (lon_vals[1], lat_vals[1]), nrCells = (N, M))
   
   # Read in the data (only 100 rows to test)
   train = pd.read_csv(filepath_or_buffer = filepath,
                       sep = ",",
-                      chunksize = 100000,
+                      chunksize = chunk_size,
                       usecols = ["GRID_POLYLINE"],
                       converters = {"GRID_POLYLINE": lambda x: eval(x)})
-
+                      
   """ Build the lattice and compute the weights for each edge
   """
 
@@ -60,56 +69,72 @@ if __name__ == "__main__":
   # Loop through every trip  
   for i, chunk in enumerate(train):
     for idx, trip in chunk.iterrows():    
-      # Initialize lists that keep track of which cells and links are counted
-      vertices = []
-      edges = []
+      # Transform the list of cells into a list of edges, where moves to the 
+      # same cell (Ex: (0,0) --> (0,0)) are removed.
+      trip_edges = [(cell, next_cell) for cell, next_cell in zip(trip.GRID_POLYLINE[:-1], trip.GRID_POLYLINE[1:]) if cell != next_cell]
       
-      for cell, next_cell in zip(trip.GRID_POLYLINE[:-1], trip.GRID_POLYLINE[1:]):
+      # Initialize lists that keep track of which edges and moves are counted  
+      # we do not want to count the same edge twice
+      edges = []
+      moves = []
+           
+      for edge, next_edge in zip(trip_edges[:-1], trip_edges[1:]):
         # Increase the counter for the current cell
-        if cell not in vertices:
-          ltc.getCell(cell).timesReached += 1
-          vertices.append(cell)
+        if edge not in edges:
+          ltc.getCell(edge).timesReached += 1
+          edges.append(edge)
         
         # Increase the counter for the link
-        if (cell, next_cell) not in edges and cell != next_cell:
-          ltc.increaseWeight(cell, next_cell, directed_lattice = True)
-          edges.append((cell, next_cell))
-    print "--- Processed %d rows" % ((i + 1)*100000)
-     
+        # Thomas @ 23-8: edge != next_edge can be removed now?
+        if (edge, next_edge) not in moves and edge != next_edge:
+          ltc.increaseWeight(edge, next_edge, directed_lattice = True)
+          moves.append((edge, next_edge))
+    print "--- Processed %d rows" % ((i + 1) * chunk_size)
     
-  """ Remark: Since it is possible that we observe a sequence like
-        ((1,1), (2,2), (1,1), (1,2))
-      we get that (1,1).timesReached is unequal to the sum of the outgoing
-      weights from (1,1).
-  """
- 
-  """ Random walk approach on weighted graph
-  """
-  # Now we have the weights for the edges, we can simulate a random walk on the graph
-  
   # Load in the validation data
   print "-- Loading validation data"
   validation = pd.read_csv(filepath_or_buffer = filepath_val,
                            sep = ",",
-                           converters = {"TRIP_ID": lambda x: str(x),
+                           converters = {"POLYLINE": lambda x: json.loads(x),
+                                         "TRUNC_POLYLINE": lambda x: json.loads(x),
                                          "START_POINT": lambda x: eval(x),
+                                         "GRID_POLYLINE": lambda x: eval(x),
                                          "TRUNC_GRID_POLYLINE": lambda x: eval(x)})
   
   print "-- Starting simulations"
-  np.random.seed(seed = 123456)
+  np.random.seed(seed = 654321)
   # Loop through every trip to make a prediction
   for idx, partial_trip in validation.iterrows():
-    start_simulation = partial_trip.TRUNC_GRID_POLYLINE[-1]  
-    
+    # Get unique moves, so that we dont start from a (cell, cell) edge
+    trip_moves = [(cell, next_cell) for cell, next_cell in zip(partial_trip.TRUNC_GRID_POLYLINE[:-1], partial_trip.TRUNC_GRID_POLYLINE[1:]) if cell != next_cell]
+    if not trip_moves:
+      # In this case, the partial trip consists of only moves within the same cell.
+      # To start the random walk, we need to move from one cell to the current cell.
+      # Therefore we randomly sample a previous cell prev_cell, and start the
+      # random walk from the edge (prev_cell, current_cell)
+      possible_moves = [-1, 0, 1]
+      move = [0, 0]
+      
+      while move[0] == 0 and move[1] == 0:
+        move = np.random.choice(a = possible_moves, size = 2)
+      
+      current_cell = partial_trip.TRUNC_GRID_POLYLINE[-1]
+      prev_cell = (current_cell[0] + move[0], current_cell[1] + move[1])
+      
+      start_edge = (prev_cell, current_cell)
+    else:
+      start_edge = trip_moves[-1]
+      
     # Initialize list of simulated destinations
     destinations = []
     
     for simulation in xrange(S):
       # Initialize the walker
-      wlk = Walker(lattice = ltc, start = start_simulation, dest_threshold = 1, alpha = 0.005)
+      wlk = Walker(lattice = ltc, start = start_edge, alpha = 0.005, dest_threshold = 1)
       
       # Simulate a random walk and record the destination
-      destinations.append(wlk.simulateWalker())
+      move_to_dest = wlk.simulateWalker()
+      destinations.append(move_to_dest[1])
   
     # Store distances to destinations
     dests = [id_to_nr(dest) for dest in destinations]
@@ -130,62 +155,7 @@ if __name__ == "__main__":
       prob_table.to_csv(filepath_processed, header = True, index = False)
     else:
       prob_table.to_csv(filepath_processed, mode = "a", header = False, index = False)
-    
+      
     print "--- Processed trip %d of %d" % (idx + 1, len(validation))
   
-  print "- Finished random walk simulation script"
-    
-
-
-def haversine(p1, p2):
-  """ haversine
-      Calculate the great circle distance between two points 
-      on the earth (specified in decimal degrees)
-      
-      Arguments:
-      ----------
-      p1: 2d numpy array
-        Two-dimensional array containing longitude and latitude coordinates of points.
-      p2: 2d numpy array
-        Two-dimensional array containing longitude and latitude coordinates of points.
-        
-      Returns:
-      --------
-      dist: 1d numpy array 
-        One-dimensional array with the distances between p1 and p2.
-  """
-  # Convert decimal degrees to radians 
-  lon1, lat1, lon2, lat2 = map(np.radians, [p1[0], p1[1], p2[0], p2[1]])
-  
-  # Haversine formula 
-  dlon = lon2 - lon1 
-  dlat = lat2 - lat1 
-  a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
-  c = 2 * np.arcsin(np.sqrt(a)) 
-  r = 6371 
-  
-  return c * r
- 
-def coords_from_cell(cell, lon = [-8.73, -8.50], lat = [41.10, 41.25], N = 100, M = 75):
-  """ coords_from_cell
-      Calculates the longitude and latitude coordinates of the middle of a 
-      given cell.
-      
-      Arguments:
-      ----------
-      cell: tuple
-        Tuple of length two containing the cell.
-      
-      Returns:
-      --------
-      coords: list
-        list of length two containing the longitude and latitude coordinates
-        of the middle of the cell.
-  """
-  lon_step = (lon[1] - lon[0]) / N 
-  lat_step = (lat[1] - lat[0]) / M
-  
-  middle_lon = lon[0] + cell[0] * lon_step + lon_step / 2
-  middle_lat = lat[0] + cell[1] * lat_step + lat_step / 2
-  
-  return [middle_lon, middle_lat]  
+  print "- Finished second-order random walk simulation script"
