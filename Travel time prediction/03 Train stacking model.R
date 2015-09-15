@@ -133,60 +133,10 @@ rf_model <- h2o.randomForest(x = independent,
 h2o.saveModel(object = gbm_model, path = "./Travel time prediction/Models/FINAL_GBM_150909", force = TRUE)
 h2o.saveModel(object = rf_model, path = "./Travel time prediction/Models/FINAL_RF_150909", force = TRUE)
 
-write.csv(rf_model@model$variable_importances, "./Travel time prediction/Models/early_stopping_rf_varimp.csv", row.names = FALSE)
-write.csv(gbm_model@model$variable_importances, "./Travel time prediction/Models/early_stopping_gbm_varimp.csv", row.names = FALSE)
-
-
-pdf("./Visualizations/rf_early_stopping.pdf", width = 8, height= 4)
-rf_model@model$scoring_history  %>%
-  ggplot(aes(x = number_of_trees)) +
-  geom_line(aes(y = sqrt(training_MSE), color = "Holdout set")) +
-  geom_line(aes(y = sqrt(validation_MSE), color = "Training set")) +  
-  scale_x_continuous(breaks = seq(from = 0, to = 268, by = 50), limits= c(NA, 268)) + 
-  #scale_y_continuous(breaks = seq(from = 0.25, to = 0.6, by = 0.05)) +
-  labs(x = "Number of trees", y = "RMSLE") +
-  theme(legend.title = element_blank())
-dev.off()
-
-
-
-
-
-
-
-
 # Now we are going to use this data to train the Ridge regression.
 
 # First, we load the complete data back into R
 stack_data <- as_data_frame(fread("./Travel time prediction/Models/stacking_training_data.csv", header = TRUE))
-
-# Use H2O to fit the model with constraints on the coefficients
-stackData <- as.h2o(stack_data, destination_frame = "stack_data.hex")
-
-coef_constraints <- data.frame(names = c("Intercept", "GBM_pred", "RF_pred"),
-                               lower_bounds = c(0.0, 0.0, 0.0),
-                               upper_bounds = c(1.0, 1.0, 1.0)) %>% as.h2o(destination_frame = "beta_constraints.hex")
-
-independent <- c("GBM_pred", "RF_pred")
-dependent <- "OBS_DURATION"
-stack_constraints <- h2o.glm(x = independent,
-                             y = dependent,
-                             training_frame = stackData,
-                             model_id = "glm_stack",
-                             standardize = FALSE,
-                             nfolds = 10,
-                             family = "gaussian",
-                             link = "identity",
-                             alpha = 0,
-                             lambda = lambda_seq,
-                             lambda_min_ratio = 0.0000001,
-                             #beta_constraints = coef_constraints,
-                             intercept = FALSE)
-
-stack_constraints@model$scoring_history %>%
-  ggplot(aes(x = log(lambda))) +
-  geom_point(aes(y = explained_deviance_train)) +
-  geom_point(aes(y = explained_deviance_test), color = "red")
 
 # Use glmnet to estimate the model
 library(glmnet)
@@ -230,7 +180,6 @@ stack_model_glmnet_full <- glmnet(x = stack_data %>% select(GBM_pred, RF_pred) %
                                   lambda = lambda_grid)
 
 save(stack_model_glmnet_full, file = "./Travel time prediction/Models/stacked_ridge_constrained.RData")
-save(stack_model_glmnet_full, file = "./Travel time prediction/Models/stacked_ridge.RData")
 
 
 
